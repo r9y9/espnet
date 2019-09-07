@@ -41,6 +41,11 @@ griffin_lim_iters=64  # the number of iterations of Griffin-Lim
 # root directory of db
 db_root=downloads
 
+# vocoder checkpoint (REQUIRED)
+voc_checkpoint=
+voc_meanvar=local/meanvar.joblib
+voc_inference_batch_size=1
+
 # exp tag
 tag="" # tag for managing experiments.
 
@@ -223,4 +228,35 @@ if [ ${stage} -le 5 ] && [ ${stop_stage} -ge 5 ]; then
     i=0; for pid in "${pids[@]}"; do wait ${pid} || ((i++)); done
     [ ${i} -gt 0 ] && echo "$0: ${i} background jobs are failed." && false
     echo "Finished."
+fi
+
+# Neural Vocoder directory
+VOC_DIR=$HOME/sp/r9y9_wavenet_vocoder
+# VOC_DIR=$HOME/sp/wavenet_vocoder
+if [ ${stage} -le 6 ] && [ ${stop_stage} -ge 6 ]; then
+    echo "stage 6: Synthesis with WaveNet"
+    if [ -z $voc_checkpoint ]; then
+      echo "voc_checkpoint is required for synthesizing waveforms using vocoder."
+      exit 1
+    fi
+    if [ -z $voc_meanvar ]; then
+      echo "meanvar.joblib is required"
+      exit 1
+    fi
+    voc_checkpoint_dir=$(dirname $voc_checkpoint)
+    for name in ${eval_set} ${dev_set}; do
+    {
+      python ./local/feats2npy.py ${outdir}_denorm/$name/feats.scp ${outdir}_denorm_npy/$name
+      python $VOC_DIR/preprocess_normalize.py ${outdir}_denorm_npy/$name ${outdir}_voc_npy/$name $voc_meanvar
+      dst_dir=${outdir}_voc_wav/$name
+      python $VOC_DIR/evaluate.py ${outdir}_voc_npy/$name $voc_checkpoint \
+        $dst_dir \
+        --hparams="batch_size=${voc_inference_batch_size}"\
+        --verbose=1
+    } done
+
+    echo ""
+    echo "Synthesized wav can be found in $dst_dir."
+    echo ""
+    echo "Finished"
 fi
