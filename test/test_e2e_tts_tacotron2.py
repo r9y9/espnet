@@ -83,8 +83,8 @@ def prepare_inputs(bs, idim, odim, maxin_len, maxout_len,
     olens = np.sort(np.random.randint(3, maxout_len, bs))[::-1].tolist()
     ilens = torch.LongTensor(ilens).to(device)
     olens = torch.LongTensor(olens).to(device)
-    xs = [np.random.randint(0, idim, l) for l in ilens]
-    ys = [np.random.randn(l, odim) for l in olens]
+    xs = [np.random.randint(0, idim, int(l)) for l in ilens]
+    ys = [np.random.randn(int(l), odim) for l in olens]
     xs = pad_list([torch.from_numpy(x).long() for x in xs], 0).to(device)
     ys = pad_list([torch.from_numpy(y).float() for y in ys], 0).to(device)
     labels = ys.new_zeros(ys.size(0), ys.size(1))

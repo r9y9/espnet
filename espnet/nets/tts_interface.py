@@ -7,6 +7,85 @@
 
 import chainer
 
+"""
+Design::
+
+### TODO
+
+What should we do for fastspeech? duration predictor...
+
+### Structure
+
+- MultiSpeakerAttSeq2SeqModel
+    - InputEmbedding
+        - TextEmbedding
+        - SpeakerEmbedding
+    - Encoder
+      - EncoderPrenet
+      - EncoderBody
+    - Decoder
+      - DecoderPrenet
+      - DecoderBody
+        - Attention
+    - PostNet
+    - StopTokenPredictor
+
+### Proof of concept.
+
+Input
+    - xs: (B, Tmax)
+    - ilens: (B,)
+    - olens: (B,)
+    - spembs: (B, spk_embed_dim)
+
+#### Off-line
+
+emb = TextEmbedding(xs) # todo: make it accept multiple inputs
+# (B, C, Tmax)
+emb = emb.transpose(1, 2)
+# (B, C, Tmax)
+hs = Encoder(emb, ilens)
+
+# Optional: concat speaker embed if necessary
+
+hs = DecoderPrenet(hs)
+before_outs, att_ws = AttDecoder(hs, ilens, ys, olens)
+
+after_outs = PostNet(before_outs)
+logits = StopTokenNet(before_outs)
+
+(before_outs, after_outs, logits, att_ws)
+
+### Decoder interface
+
+- requires_channel_first
+
+"""
+
+
+class EncoderInterface(object):
+    def __init__(self, prenet, encoder):
+        pass
+
+    def forward(self, xs, **kwargs):
+        raise NotImplementedError()
+
+
+class Decoder(object):
+    def __init__(self, prenet, encoder):
+        pass
+
+    def forward(self, xs, **kwargs):
+        raise NotImplementedError()
+
+
+class Postnet(object):
+    def __init__(self, prenet, encoder):
+        pass
+
+    def forward(self, xs, **kwargs):
+        raise NotImplementedError()
+
 
 class Reporter(chainer.Chain):
     """Reporter module."""

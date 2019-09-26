@@ -14,7 +14,7 @@ import torch.nn.functional as F
 from espnet.nets.pytorch_backend.rnn.attentions import AttForwardTA
 
 
-def decoder_init(m):
+def _decoder_init(m):
     """Initialize decoder parameters."""
     if isinstance(m, torch.nn.Conv1d):
         torch.nn.init.xavier_uniform_(m.weight, torch.nn.init.calculate_gain('tanh'))
@@ -116,7 +116,7 @@ class Prenet(torch.nn.Module):
         super(Prenet, self).__init__()
         self.dropout_rate = dropout_rate
         self.prenet = torch.nn.ModuleList()
-        for layer in six.moves.range(n_layers):
+        for layer in range(n_layers):
             n_inputs = idim if layer == 0 else n_units
             self.prenet += [torch.nn.Sequential(
                 torch.nn.Linear(n_inputs, n_units),
@@ -313,7 +313,7 @@ class Decoder(torch.nn.Module):
         self.prob_out = torch.nn.Linear(iunits, reduction_factor)
 
         # initialize
-        self.apply(decoder_init)
+        self.apply(_decoder_init)
 
     def _zero_state(self, hs):
         init_hs = hs.new_zeros(hs.size(0), self.lstm[0].hidden_size)

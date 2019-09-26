@@ -14,13 +14,61 @@ from torch.nn.utils.rnn import pack_padded_sequence
 from torch.nn.utils.rnn import pad_packed_sequence
 
 
-def encoder_init(m):
-    """Initialize encoder parameters."""
+def _encoder_init(m):
     if isinstance(m, torch.nn.Conv1d):
         torch.nn.init.xavier_uniform_(m.weight, torch.nn.init.calculate_gain('relu'))
 
 
-class Encoder(torch.nn.Module):
+class EncoderEmbedding(torch.nn.Module):
+    def __init__(self, idim, embed_dim, padding_idx=0):
+        super(EncoderEmbedding, self).__init__()
+        self.embed = torch.nn.Embedding(idim, embed_dim, padding_idx=padding_idx)
+        self.odim = embed_dim
+
+    def get_odim(self):
+        return self.odim
+
+    def forward(self, xs):
+        return self.embed(xs)
+
+
+class Prenet(torch.nn.Module):
+    def __init__(self, idim,
+                 conv_layers=3,
+                 conv_chans=512,
+                 conv_filts=5,
+                 use_residual=False,
+                 dropout_rate=0.5):
+        super(Prenet, self).__init__()
+        self.odim = conv_chans
+        self.use_residual = use_residual
+
+        assert conv_layers > 0
+        self.conv_blocks = torch.nn.ModuleList()
+        for layer in range(conv_layers):
+            ichans = idim if layer == 0 else conv_chans
+            self.conv_blocks += [torch.nn.Sequential(
+                torch.nn.Conv1d(ichans, conv_chans, conv_filts, stride=1,
+                                padding=(conv_filts - 1) // 2, bias=False),
+                torch.nn.BatchNorm1d(conv_chans),
+                torch.nn.ReLU(),
+                torch.nn.Dropout(dropout_rate))]
+
+        self.apply(_encoder_init)
+
+    def get_odim(self):
+        return self.odim
+
+    def forward(self, xs):
+        for conv in self.conv_blocks:
+            if self.use_residual:
+                xs += conv(xs)
+            else:
+                xs = conv(xs)
+        return xs
+
+
+class EncoderBody(torch.nn.Module):
     """Encoder module of Spectrogram prediction network.
 
     This is a module of encoder of Spectrogram prediction network in Tacotron2, which described in `Natural TTS
@@ -32,69 +80,25 @@ class Encoder(torch.nn.Module):
 
     """
 
-    def __init__(self, idim,
-                 embed_dim=512,
-                 elayers=1,
-                 eunits=512,
-                 econv_layers=3,
-                 econv_chans=512,
-                 econv_filts=5,
-                 use_batch_norm=True,
-                 use_residual=False,
-                 dropout_rate=0.5,
-                 padding_idx=0):
+    def __init__(self, idim, layers=2, units=512, dropout_rate=0.5):
         """Initialize Tacotron2 encoder module.
 
         Args:
             idim (int) Dimension of the inputs.
-            embed_dim (int, optional) Dimension of character embedding.
-            elayers (int, optional) The number of encoder blstm layers.
-            eunits (int, optional) The number of encoder blstm units.
-            econv_layers (int, optional) The number of encoder conv layers.
-            econv_filts (int, optional) The number of encoder conv filter size.
-            econv_chans (int, optional) The number of encoder conv filter channels.
-            use_batch_norm (bool, optional) Whether to use batch normalization.
-            use_residual (bool, optional) Whether to use residual connection.
+            layers (int, optional) The number of encoder blstm layers.
+            units (int, optional) The number of encoder blstm units.
             dropout_rate (float, optional) Dropout rate.
 
         """
-        super(Encoder, self).__init__()
-        # store the hyperparameters
-        self.idim = idim
-        self.use_residual = use_residual
+        super(EncoderBody, self).__init__()
 
-        # define network layer modules
-        self.embed = torch.nn.Embedding(idim, embed_dim, padding_idx=padding_idx)
-        if econv_layers > 0:
-            self.convs = torch.nn.ModuleList()
-            for layer in six.moves.range(econv_layers):
-                ichans = embed_dim if layer == 0 else econv_chans
-                if use_batch_norm:
-                    self.convs += [torch.nn.Sequential(
-                        torch.nn.Conv1d(ichans, econv_chans, econv_filts, stride=1,
-                                        padding=(econv_filts - 1) // 2, bias=False),
-                        torch.nn.BatchNorm1d(econv_chans),
-                        torch.nn.ReLU(),
-                        torch.nn.Dropout(dropout_rate))]
-                else:
-                    self.convs += [torch.nn.Sequential(
-                        torch.nn.Conv1d(ichans, econv_chans, econv_filts, stride=1,
-                                        padding=(econv_filts - 1) // 2, bias=False),
-                        torch.nn.ReLU(),
-                        torch.nn.Dropout(dropout_rate))]
-        else:
-            self.convs = None
-        if elayers > 0:
-            iunits = econv_chans if econv_layers != 0 else embed_dim
+        if layers > 0:
             self.blstm = torch.nn.LSTM(
-                iunits, eunits // 2, elayers,
+                idim, units // 2, layers,
                 batch_first=True,
                 bidirectional=True)
         else:
             self.blstm = None
-
-        # initialize
-        self.apply(encoder_init)
 
     def forward(self, xs, ilens=None):
         """Calculate forward propagation.
@@ -104,25 +108,21 @@ class Encoder(torch.nn.Module):
             ilens (LongTensor): Batch of lengths of each input batch (B,).
 
         Returns:
-            Tensor: Batch of the sequences of encoder states(B, Tmax, eunits).
+            Tensor: Batch of the sequences of encoder states(B, Tmax, units).
             LongTensor: Batch of lengths of each sequence (B,)
 
         """
-        xs = self.embed(xs).transpose(1, 2)
-        if self.convs is not None:
-            for l in six.moves.range(len(self.convs)):
-                if self.use_residual:
-                    xs += self.convs[l](xs)
-                else:
-                    xs = self.convs[l](xs)
         if self.blstm is None:
+            # TODO: test this. probably check axis
             return xs.transpose(1, 2)
+
         xs = pack_padded_sequence(xs.transpose(1, 2), ilens, batch_first=True)
         self.blstm.flatten_parameters()
         xs, _ = self.blstm(xs)  # (B, Tmax, C)
-        xs, hlens = pad_packed_sequence(xs, batch_first=True)
+        # TODO: should be okay to ignore returned hlens, but just in case check this again later
+        xs, _ = pad_packed_sequence(xs, batch_first=True)
 
-        return xs, hlens
+        return xs, ilens
 
     def inference(self, x):
         """Inference.
@@ -131,9 +131,10 @@ class Encoder(torch.nn.Module):
             x (Tensor): The sequeunce of character ids (T,).
 
         Returns:
-            Tensor: The sequences of encoder states(T, eunits).
+            Tensor: The sequences of encoder states(T, units).
 
         """
+        # TODO: is this really needed?
         assert len(x.size()) == 1
         xs = x.unsqueeze(0)
         ilens = [x.size(0)]
