@@ -250,7 +250,7 @@ if [ ${stage} -le 6 ] && [ ${stop_stage} -ge 6 ]; then
     voc_checkpoint_dir=$(dirname $voc_checkpoint)
     for name in ${eval_set} ${train_dev}; do
     {
-      python ./local/feats2npy.py ${outdir}/$name/feats.scp ${outdir}_npy/$name
+      python utils/feats2npy.py ${outdir}/$name/feats.scp ${outdir}_npy/$name
       dst_dir=${outdir}_voc_wav/$name
       python $VOC_DIR/evaluate.py ${outdir}_npy/$name $voc_checkpoint \
         $dst_dir \
