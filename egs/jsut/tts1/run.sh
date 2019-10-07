@@ -44,6 +44,10 @@ model=model.loss.best
 n_average=1 # if > 0, the model averaged with n_average ckpts will be used instead of model.loss.best
 griffin_lim_iters=64  # the number of iterations of Griffin-Lim
 
+# vocoder checkpoint (REQUIRED)
+voc_checkpoint=
+voc_inference_batch_size=1
+
 # root directory of db
 db_root=downloads
 
@@ -232,4 +236,30 @@ if [ ${stage} -le 5 ] && [ ${stop_stage} -ge 5 ]; then
     i=0; for pid in "${pids[@]}"; do wait ${pid} || ((i++)); done
     [ ${i} -gt 0 ] && echo "$0: ${i} background jobs are failed." && false
     echo "Finished."
+fi
+
+# Neural Vocoder directory
+VOC_DIR=$HOME/sp/r9y9_wavenet_vocoder
+# VOC_DIR=$HOME/sp/wavenet_vocoder
+if [ ${stage} -le 6 ] && [ ${stop_stage} -ge 6 ]; then
+    echo "stage 6: Synthesis with WaveNet"
+    if [ -z $voc_checkpoint ]; then
+      echo "voc_checkpoint is required for synthesizing waveforms using vocoder."
+      exit 1
+    fi
+    voc_checkpoint_dir=$(dirname $voc_checkpoint)
+    for name in ${eval_set} ${dev_set}; do
+    {
+      python ./local/feats2npy.py ${outdir}/$name/feats.scp ${outdir}_npy/$name
+      dst_dir=${outdir}_voc_wav/$name
+      python $VOC_DIR/evaluate.py ${outdir}_npy/$name $voc_checkpoint \
+        $dst_dir \
+        --hparams="batch_size=${voc_inference_batch_size}"\
+        --verbose=1
+    } done
+
+    echo ""
+    echo "Synthesized wav can be found in $dst_dir."
+    echo ""
+    echo "Finished"
 fi
